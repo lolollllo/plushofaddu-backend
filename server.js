@@ -8,11 +8,11 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp'); // Added sharp
-const { defaultPort } = require('../frontend/src/config.json')
+// const { defaultPort } = require('../frontend/src/config.json')
 
 
 const app = express();
-const port = defaultPort;
+const port = 3000;
 const SECRET = 'supersecretkey';
 
 
@@ -365,3 +365,4 @@ app.use(express.static(path.join(__dirname, 'build')));
 app.get('*', (req, res) => {
   res.sendFile(path.resolve(__dirname, 'build', 'index.html'));
 });
+
