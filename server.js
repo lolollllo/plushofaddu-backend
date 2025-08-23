@@ -303,27 +303,47 @@ app.post('/admin/items', authenticate, (req, res) => {
 // Get all orders (with item summaries)
 app.get('/admin/orders', authenticate, (req, res) => {
   db.all(
-    `SELECT 
-      orders.id,
-      orders.customer_name,
-      orders.instagram,
-      orders.phone,
-      orders.delivery_method,
-      orders.payment_method,
-      orders.tracking_id,
-      orders.status,
-      orders.created_at,
-      GROUP_CONCAT(items.name || ' x' || order_items.quantity || 
-        CASE WHEN items.status = 'pre-order' THEN ' (Pre-order)' ELSE '' END, ', ') AS items_list
-     FROM orders
-     LEFT JOIN order_items ON orders.id = order_items.order_id
-     LEFT JOIN items ON order_items.item_id = items.id
-     GROUP BY orders.id
-     ORDER BY orders.created_at DESC`,
+    `SELECT * FROM orders ORDER BY created_at DESC`,
     [],
-    (err, rows) => {
+    (err, orders) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
+
+      // If no orders, return empty array immediately
+      if (!orders.length) return res.json([]);
+
+      // Extract order IDs for item lookup
+      const orderIds = orders.map(o => o.id);
+
+      // Query all order items with item details for these orders
+      db.all(
+        `SELECT oi.order_id, i.name, i.status, oi.quantity
+         FROM order_items oi
+         JOIN items i ON oi.item_id = i.id
+         WHERE oi.order_id IN (${orderIds.map(() => "?").join(",")})`,
+        orderIds,
+        (err, items) => {
+          if (err) return res.status(500).json({ error: err.message });
+
+          // Map order_id => [items]
+          const itemsByOrder = {};
+          for (const item of items) {
+            if (!itemsByOrder[item.order_id]) itemsByOrder[item.order_id] = [];
+            itemsByOrder[item.order_id].push({
+              name: item.name,
+              status: item.status,
+              quantity: item.quantity,
+            });
+          }
+
+          // Attach items array to each order
+          const ordersWithItems = orders.map(order => ({
+            ...order,
+            items: itemsByOrder[order.id] || [],
+          }));
+
+          res.json(ordersWithItems);
+        }
+      );
     }
   );
 });
@@ -406,6 +426,31 @@ app.post('/admin/orders', authenticate, (req, res) => {
             items,
             message: "Order created successfully",
           });
+        }
+      );
+    }
+  );
+});
+
+// DELETE an order by ID (admin only)
+app.delete('/admin/orders/:id', authenticate, (req, res) => {
+  const orderId = req.params.id;
+
+  // Delete order items first due to foreign key dependency
+  db.run(
+    "DELETE FROM order_items WHERE order_id = ?",
+    [orderId],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+
+      // Then delete the order record itself
+      db.run(
+        "DELETE FROM orders WHERE id = ?",
+        [orderId],
+        function (err) {
+          if (err) return res.status(500).json({ error: err.message });
+          if (this.changes === 0) return res.status(404).json({ error: "Order not found" });
+          res.json({ success: true, message: "Order deleted" });
         }
       );
     }
