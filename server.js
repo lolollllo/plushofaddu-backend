@@ -433,7 +433,7 @@ app.post('/admin/orders', authenticate, (req, res) => {
 });
 
 // DELETE an order by ID (admin only)
-app.delete('/admin/orders/:id', authenticate, (req, res) => {
+/*app.delete('/admin/orders/:id', authenticate, (req, res) => {
   const orderId = req.params.id;
 
   // Delete order items first due to foreign key dependency
@@ -455,7 +455,7 @@ app.delete('/admin/orders/:id', authenticate, (req, res) => {
       );
     }
   );
-});
+});*/
 
 
 // Track order by tracking id
@@ -519,3 +519,4 @@ app.get('*', (req, res) => {
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
 });
+
