@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp'); // Added sharp
 
+
 const app = express();
 const port = 3000;
 const SECRET = 'supersecretkey';
@@ -178,6 +179,7 @@ app.post('/orders', (req, res) => {
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       const orderId = this.lastID;
+
       const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
       for (const oi of orderItems) {
         stmt.run(orderId, oi.item_id, oi.quantity);
@@ -185,11 +187,24 @@ app.post('/orders', (req, res) => {
       stmt.finalize();
 
       db.all(
-        `SELECT i.price, oi.quantity FROM order_items oi JOIN items i ON oi.item_id = i.id WHERE oi.order_id = ?`,
+        `SELECT i.name, i.price, oi.quantity 
+         FROM order_items oi
+         JOIN items i ON oi.item_id = i.id 
+         WHERE oi.order_id = ?`,
         [orderId],
-        (err, priceRows) => {
+        (err, itemsWithNames) => {
           if (err) return res.status(500).json({ error: err.message });
-          const totalPrice = priceRows.reduce((sum, row) => sum + row.price * row.quantity, 0);
+
+          const totalPrice = itemsWithNames.reduce(
+            (sum, row) => sum + row.price * row.quantity,
+            0
+          );
+
+          // Map items to just name and quantity for response
+          const items = itemsWithNames.map(({ name, quantity }) => ({
+            name,
+            quantity,
+          }));
 
           res.json({
             order_id: orderId,
@@ -200,7 +215,7 @@ app.post('/orders', (req, res) => {
             delivery_method,
             payment_method,
             total_price: totalPrice.toFixed(2),
-            items: orderItems,
+            items,
             message: "Your order has been confirmed!",
           });
         }
@@ -349,19 +364,31 @@ app.post('/admin/orders', authenticate, (req, res) => {
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       const orderId = this.lastID;
-      const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
 
+      const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
       for (const oi of orderItems) {
         stmt.run(orderId, oi.item_id, oi.quantity);
       }
       stmt.finalize();
 
       db.all(
-        `SELECT i.price, oi.quantity FROM order_items oi JOIN items i ON oi.item_id = i.id WHERE oi.order_id = ?`,
+        `SELECT i.name, i.price, oi.quantity 
+         FROM order_items oi 
+         JOIN items i ON oi.item_id = i.id
+         WHERE oi.order_id = ?`,
         [orderId],
-        (err, priceRows) => {
+        (err, itemsWithNames) => {
           if (err) return res.status(500).json({ error: err.message });
-          const totalPrice = priceRows.reduce((sum, row) => sum + row.price * row.quantity, 0);
+
+          const totalPrice = itemsWithNames.reduce(
+            (sum, row) => sum + row.price * row.quantity,
+            0
+          );
+
+          const items = itemsWithNames.map(({ name, quantity }) => ({
+            name,
+            quantity,
+          }));
 
           res.json({
             order_id: orderId,
@@ -372,7 +399,7 @@ app.post('/admin/orders', authenticate, (req, res) => {
             delivery_method,
             payment_method,
             total_price: totalPrice.toFixed(2),
-            items: orderItems,
+            items,
             message: "Order created successfully",
           });
         }
@@ -443,4 +470,3 @@ app.get('*', (req, res) => {
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
 });
-
