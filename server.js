@@ -187,7 +187,7 @@ app.post('/orders', (req, res) => {
       stmt.finalize();
 
       db.all(
-        `SELECT i.name, i.price, oi.quantity 
+        `SELECT i.name, i.status, i.price, oi.quantity 
          FROM order_items oi
          JOIN items i ON oi.item_id = i.id 
          WHERE oi.order_id = ?`,
@@ -395,7 +395,7 @@ app.post('/admin/orders', authenticate, (req, res) => {
       stmt.finalize();
 
       db.all(
-        `SELECT i.name, i.price, oi.quantity 
+        `SELECT i.name, i.status, i.price, oi.quantity 
          FROM order_items oi 
          JOIN items i ON oi.item_id = i.id
          WHERE oi.order_id = ?`,
