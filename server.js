@@ -203,6 +203,7 @@ app.post('/orders', (req, res) => {
           // Map items to just name and quantity for response
           const items = itemsWithNames.map(({ name, quantity }) => ({
             name,
+            status,
             quantity,
           }));
 
@@ -256,6 +257,7 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
     await sharp(imagePath)
       .resize(800, 800, {
         fit: 'inside',
+        position: sharp.strategy.attention,  // Focus on main subject
         withoutEnlargement: true,
       })
       .toFile(resizedImagePath);
@@ -311,7 +313,8 @@ app.get('/admin/orders', authenticate, (req, res) => {
       orders.tracking_id,
       orders.status,
       orders.created_at,
-      GROUP_CONCAT(items.name || ' x' || order_items.quantity, ', ') AS items_list
+      GROUP_CONCAT(items.name || ' x' || order_items.quantity || 
+        CASE WHEN items.status = 'pre-order' THEN ' (Pre-order)' ELSE '' END, ', ') AS items_list
      FROM orders
      LEFT JOIN order_items ON orders.id = order_items.order_id
      LEFT JOIN items ON order_items.item_id = items.id
@@ -387,6 +390,7 @@ app.post('/admin/orders', authenticate, (req, res) => {
 
           const items = itemsWithNames.map(({ name, quantity }) => ({
             name,
+            status,
             quantity,
           }));
 
