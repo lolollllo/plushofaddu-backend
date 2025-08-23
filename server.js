@@ -8,28 +8,23 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp'); // Added sharp
-// const { defaultPort } = require('../frontend/src/config.json')
-
+const { defaultPort } = require('../frontend/src/config.json')
 
 const app = express();
-const port = 3000;
+const port = defaultPort;
 const SECRET = 'supersecretkey';
-
 
 app.use(cors());
 app.use(bodyParser.json());
 
-
 // Serve uploaded images statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
-
 
 // Multer setup for image uploads
 const storage = multer.diskStorage({
@@ -44,7 +39,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-
 const db = new sqlite3.Database('./database.sqlite', (err) => {
   if (err) {
     console.error("DB connection error:", err);
@@ -52,7 +46,6 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
     console.log('Connected to SQLite database.');
   }
 });
-
 
 // Generate tracking ID: POA<8 chars uppercase alphanumeric>
 function generateTrackingId() {
@@ -63,7 +56,6 @@ function generateTrackingId() {
   }
   return 'POA' + code;
 }
-
 
 // Initialize database tables
 db.serialize(() => {
@@ -105,7 +97,6 @@ db.serialize(() => {
       FOREIGN KEY(item_id) REFERENCES items(id)
     )`);
 
-
   // Seed default admin user if not exists
   db.get("SELECT * FROM admins WHERE username = 'admin'", (err, row) => {
     if (err) {
@@ -124,23 +115,19 @@ db.serialize(() => {
   });
 });
 
-
 // Authentication middleware
 function authenticate(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(403).json({ error: "No token" });
 
-
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   if (!token) return res.status(403).json({ error: "No token" });
-
 
   jwt.verify(token, SECRET, (err) => {
     if (err) return res.status(403).json({ error: "Token invalid" });
     next();
   });
 }
-
 
 // Public endpoint: Get items
 app.get('/items', (req, res) => {
@@ -150,6 +137,37 @@ app.get('/items', (req, res) => {
   });
 });
 
+// Public order placement endpoint (no authent at all)
+app.post('/orders', (req, res) => {
+  const { customer_name, contact_info, instagram, phone, delivery_method, payment_method, orderItems } = req.body;
+
+  if (!customer_name || (!contact_info && !instagram && !phone)) {
+    return res.status(400).json({ error: "Customer name and at least one contact info required" });
+  }
+  if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) {
+    return res.status(400).json({ error: "Order must have at least one item" });
+  }
+
+  const tracking_id = generateTrackingId();
+
+  db.run(
+    `INSERT INTO orders (
+      customer_name, contact_info, instagram, phone,
+      delivery_method, payment_method, tracking_id, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting for updates')`,
+    [customer_name, contact_info || null, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      const orderId = this.lastID;
+      const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
+      for (const oi of orderItems) {
+        stmt.run(orderId, oi.item_id, oi.quantity);
+      }
+      stmt.finalize();
+      res.json({ order_id: orderId, tracking_id });
+    }
+  );
+});
 
 // Admin login
 app.post('/admin/login', (req, res) => {
@@ -158,18 +176,15 @@ app.post('/admin/login', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
-
     bcrypt.compare(password, user.password, (err, valid) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!valid) return res.status(401).json({ error: "Invalid credentials" });
-
 
       const token = jwt.sign({ username: user.username }, SECRET, { expiresIn: '4h' });
       res.json({ token });
     });
   });
 });
-
 
 // Image upload route with sharp resize
 app.post('/admin/items/upload-image', authenticate, upload.single('image'), async (req, res) => {
@@ -179,7 +194,7 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
   const resizedImagePath = path.join(uploadsDir, 'resized-' + req.file.filename);
 
   try {
-    // Resize to max 800x800, maintaining aspect ratio, no enlargement
+    // Resize to max 800x800, maintain aspect ratio, no enlargement
     await sharp(imagePath)
       .resize(800, 800, {
         fit: 'inside',
@@ -187,10 +202,10 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
       })
       .toFile(resizedImagePath);
 
-    // Delete the original uploaded image
+    // Delete original uploaded image
     fs.unlinkSync(imagePath);
 
-    // Rename the resized image to the original filename
+    // Rename resized image to original filename
     fs.renameSync(resizedImagePath, imagePath);
 
     const imageUrl = `/uploads/${req.file.filename}`;
@@ -200,7 +215,6 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
     res.status(500).json({ error: "Failed to process image" });
   }
 });
-
 
 // Add new item
 app.post('/admin/items', authenticate, (req, res) => {
@@ -225,7 +239,6 @@ app.post('/admin/items', authenticate, (req, res) => {
     }
   );
 });
-
 
 // Get all orders (with item summaries)
 app.get('/admin/orders', authenticate, (req, res) => {
@@ -255,7 +268,6 @@ app.get('/admin/orders', authenticate, (req, res) => {
   );
 });
 
-
 // Update order status by order id
 app.post('/admin/orders/:id/status', authenticate, (req, res) => {
   const { status } = req.body;
@@ -268,8 +280,7 @@ app.post('/admin/orders/:id/status', authenticate, (req, res) => {
   });
 });
 
-
-// Add new order with items
+// Add new order with items (admin)
 app.post('/admin/orders', authenticate, (req, res) => {
   const { customer_name, contact_info, instagram, phone, delivery_method, payment_method, orderItems } = req.body;
 
@@ -303,7 +314,6 @@ app.post('/admin/orders', authenticate, (req, res) => {
   );
 });
 
-
 // Track order by tracking id
 app.get('/track/:trackingId', (req, res) => {
   db.get("SELECT * FROM orders WHERE tracking_id = ?", [req.params.trackingId], (err, order) => {
@@ -323,7 +333,6 @@ app.get('/track/:trackingId', (req, res) => {
     );
   });
 });
-
 
 app.put('/admin/items/:id', authenticate, (req, res) => {
   const { id } = req.params;
@@ -354,15 +363,12 @@ app.put('/admin/items/:id', authenticate, (req, res) => {
   );
 });
 
-
-// Start server
-app.listen(port, () => {
-  console.log(`Backend running on http://localhost:${port}`);
-});
-
-
+// Serve React build for non-API requests
 app.use(express.static(path.join(__dirname, 'build')));
 app.get('*', (req, res) => {
   res.sendFile(path.resolve(__dirname, 'build', 'index.html'));
 });
 
+app.listen(port, () => {
+  console.log(`Backend running on http://localhost:${port}`);
+});
