@@ -170,59 +170,83 @@ app.post('/orders', (req, res) => {
 
   const tracking_id = generateTrackingId();
 
-  db.run(
-    `INSERT INTO orders (
-      customer_name, instagram, phone,
-      delivery_method, payment_method, tracking_id, status
-    ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
-    [customer_name, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      const orderId = this.lastID;
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
 
-      const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
-      for (const oi of orderItems) {
-        stmt.run(orderId, oi.item_id, oi.quantity);
-      }
-      stmt.finalize();
+    db.run(
+      `INSERT INTO orders (
+        customer_name, instagram, phone,
+        delivery_method, payment_method, tracking_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
+      [customer_name, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
+      function (err) {
+        if (err) {
+          db.run("ROLLBACK");
+          return res.status(500).json({ error: err.message });
+        }
 
-      db.all(
-        `SELECT i.name, i.status, i.price, oi.quantity 
-         FROM order_items oi
-         JOIN items i ON oi.item_id = i.id 
-         WHERE oi.order_id = ?`,
-        [orderId],
-        (err, itemsWithNames) => {
-          if (err) return res.status(500).json({ error: err.message });
+        const orderId = this.lastID;
+        const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
 
-          const totalPrice = itemsWithNames.reduce(
-            (sum, row) => sum + row.price * row.quantity,
-            0
-          );
-
-          // Map items to just name and quantity for response
-          const items = itemsWithNames.map(({ name, quantity }) => ({
-            name,
-            status,
-            quantity,
-          }));
-
-          res.json({
-            order_id: orderId,
-            tracking_id,
-            customer_name,
-            instagram,
-            phone,
-            delivery_method,
-            payment_method,
-            total_price: totalPrice.toFixed(2),
-            items,
-            message: "Your order has been confirmed!",
+        for (const oi of orderItems) {
+          stmt.run(orderId, oi.item_id, oi.quantity, function (err) {
+            if (err) {
+              db.run("ROLLBACK");
+              return res.status(500).json({ error: err.message });
+            }
           });
         }
-      );
-    }
-  );
+
+        stmt.finalize((err) => {
+          if (err) {
+            db.run("ROLLBACK");
+            return res.status(500).json({ error: err.message });
+          }
+
+          // Commit after all inserts succeeded
+          db.run("COMMIT", (commitErr) => {
+            if (commitErr) return res.status(500).json({ error: commitErr.message });
+
+            // Now fetch the order items with status included
+            db.all(
+              `SELECT i.name, i.status, i.price, oi.quantity
+               FROM order_items oi
+               JOIN items i ON oi.item_id = i.id
+               WHERE oi.order_id = ?`,
+              [orderId],
+              (err, itemsWithNames) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                const totalPrice = itemsWithNames.reduce(
+                  (sum, row) => sum + row.price * row.quantity,
+                  0
+                );
+
+                const items = itemsWithNames.map(({ name, status, quantity }) => ({
+                  name,
+                  status,
+                  quantity,
+                }));
+
+                res.json({
+                  order_id: orderId,
+                  tracking_id,
+                  customer_name,
+                  instagram,
+                  phone,
+                  delivery_method,
+                  payment_method,
+                  total_price: totalPrice.toFixed(2),
+                  items,
+                  message: "Your order has been confirmed!",
+                });
+              }
+            );
+          });
+        });
+      }
+    );
+  });
 });
 
 
@@ -378,58 +402,81 @@ app.post('/admin/orders', authenticate, (req, res) => {
 
   const tracking_id = generateTrackingId();
 
-  db.run(
-    `INSERT INTO orders (
-      customer_name, instagram, phone,
-      delivery_method, payment_method, tracking_id, status
-    ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
-    [customer_name, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      const orderId = this.lastID;
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
 
-      const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
-      for (const oi of orderItems) {
-        stmt.run(orderId, oi.item_id, oi.quantity);
-      }
-      stmt.finalize();
+    db.run(
+      `INSERT INTO orders (
+        customer_name, instagram, phone,
+        delivery_method, payment_method, tracking_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
+      [customer_name, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
+      function (err) {
+        if (err) {
+          db.run("ROLLBACK");
+          return res.status(500).json({ error: err.message });
+        }
 
-      db.all(
-        `SELECT i.name, i.status, i.price, oi.quantity 
-         FROM order_items oi 
-         JOIN items i ON oi.item_id = i.id
-         WHERE oi.order_id = ?`,
-        [orderId],
-        (err, itemsWithNames) => {
-          if (err) return res.status(500).json({ error: err.message });
+        const orderId = this.lastID;
+        const stmt = db.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
 
-          const totalPrice = itemsWithNames.reduce(
-            (sum, row) => sum + row.price * row.quantity,
-            0
-          );
-
-          const items = itemsWithNames.map(({ name, quantity }) => ({
-            name,
-            status,
-            quantity,
-          }));
-
-          res.json({
-            order_id: orderId,
-            tracking_id,
-            customer_name,
-            instagram,
-            phone,
-            delivery_method,
-            payment_method,
-            total_price: totalPrice.toFixed(2),
-            items,
-            message: "Order created successfully",
+        for (const oi of orderItems) {
+          stmt.run(orderId, oi.item_id, oi.quantity, function (err) {
+            if (err) {
+              db.run("ROLLBACK");
+              return res.status(500).json({ error: err.message });
+            }
           });
         }
-      );
-    }
-  );
+
+        stmt.finalize((err) => {
+          if (err) {
+            db.run("ROLLBACK");
+            return res.status(500).json({ error: err.message });
+          }
+
+          db.run("COMMIT", (commitErr) => {
+            if (commitErr) return res.status(500).json({ error: commitErr.message });
+
+            db.all(
+              `SELECT i.name, i.status, i.price, oi.quantity
+               FROM order_items oi
+               JOIN items i ON oi.item_id = i.id
+               WHERE oi.order_id = ?`,
+              [orderId],
+              (err, itemsWithNames) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                const totalPrice = itemsWithNames.reduce(
+                  (sum, row) => sum + row.price * row.quantity,
+                  0
+                );
+
+                const items = itemsWithNames.map(({ name, status, quantity }) => ({
+                  name,
+                  status,
+                  quantity,
+                }));
+
+                res.json({
+                  order_id: orderId,
+                  tracking_id,
+                  customer_name,
+                  instagram,
+                  phone,
+                  delivery_method,
+                  payment_method,
+                  total_price: totalPrice.toFixed(2),
+                  items,
+                  message: "Order created successfully",
+                });
+              }
+            );
+          });
+        });
+      }
+    );
+  });
 });
 
 // DELETE an order by ID (admin only)
