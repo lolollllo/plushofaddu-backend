@@ -8,11 +8,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp'); // Added sharp
-const { defaultPort } = require('../frontend/src/config.json')
-
 
 const app = express();
-const port = defaultPort;
+const port = 3000;
 const SECRET = 'supersecretkey';
 
 
@@ -445,3 +443,4 @@ app.get('*', (req, res) => {
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
 });
+
