@@ -307,6 +307,23 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
   }
 });
 
+// Multiple images upload endpoint - no required files, returns empty array if none uploaded
+app.post('/admin/items/upload-images', authenticate, (req, res) => {
+  multiUpload(req, res, function (err) {
+    if (err) {
+      return res.status(500).json({ error: err.message || 'Upload failed' });
+    }
+
+    if (!req.files || req.files.length === 0) {
+      // No files uploaded is OK, just return empty array
+      return res.json({ urls: [] });
+    }
+
+    const imageUrls = req.files.map(file => `/uploads/${file.filename}`);
+    res.json({ urls: imageUrls });
+  });
+});
+
 // Upload additional image for an item (store in item_images)
 app.post('/admin/items/:id/upload-image', authenticate, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
