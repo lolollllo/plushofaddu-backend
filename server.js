@@ -44,6 +44,7 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
     console.error("DB connection error:", err);
   } else {
     console.log('Connected to SQLite database.');
+    migrateImagesToItemImages();
   }
 });
 
@@ -141,6 +142,28 @@ function authenticate(req, res, next) {
     next();
   });
 }
+
+function migrateImagesToItemImages() {
+  db.all("SELECT id, image_url FROM items WHERE image_url IS NOT NULL AND image_url != ''", [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching items for migration:', err);
+      return;
+    }
+    if (rows.length === 0) {
+      console.log('Migration skipped: No image_url entries found in items.');
+      return;
+    }
+    const stmt = db.prepare("INSERT OR IGNORE INTO item_images(item_id, image_url) VALUES (?, ?)");
+    rows.forEach(({ id, image_url }) => {
+      stmt.run(id, image_url);
+    });
+    stmt.finalize((err) => {
+      if (err) console.error('Error during migration:', err);
+      else console.log('Migration complete: item_images populated from items.image_url');
+    });
+  });
+}
+
 
 // Public endpoint: Get items with preview image (first from item_images)
 app.get('/items', (req, res) => {
@@ -358,7 +381,7 @@ app.post('/admin/items/:id/upload-image', authenticate, upload.single('image'), 
 
 // Add new item
 app.post('/admin/items', authenticate, (req, res) => {
-  const { name, price, image_url, status, description, stock } = req.body;
+  const { name, price, image_url, status, description, stock, images = [] } = req.body;
 
   if (!name || price === undefined || !status) {
     return res.status(400).json({ error: "Name, price and status are required" });
@@ -379,10 +402,23 @@ app.post('/admin/items', authenticate, (req, res) => {
     [name, priceNum, image_url || null, finalStatus, description || "", stockNum],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.json({ success: true, id: this.lastID });
+      const itemId = this.lastID;
+
+      if (images.length > 0) {
+        const stmt = db.prepare("INSERT INTO item_images(item_id, image_url) VALUES (?, ?)");
+        images.forEach(url => {
+          stmt.run(itemId, url);
+        });
+        stmt.finalize(err => {
+          if (err) console.error('Failed to insert item_images:', err);
+        });
+      }
+
+      res.json({ success: true, id: itemId });
     }
   );
 });
+
 
 // Get all orders (with item summaries)
 app.get('/admin/orders', authenticate, (req, res) => {
@@ -610,7 +646,7 @@ app.put('/admin/items/:id', authenticate, (req, res) => {
 });
 
 // Serve React build for non-API requests
-app.use(express.static(path.join(__dirname, 'build')));
+app.use(express.static(path.join(__dirname, 'build'))); 
 app.get('*', (req, res) => {
   res.sendFile(path.resolve(__dirname, 'build', 'index.html'));
 });
