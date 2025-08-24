@@ -7,7 +7,7 @@ const bodyParser = require('body-parser');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const sharp = require('sharp'); // Added sharp
+const sharp = require('sharp');
 
 
 const app = express();
@@ -78,7 +78,8 @@ db.serialize(() => {
       price REAL NOT NULL DEFAULT 0,
       image_url TEXT,
       status TEXT CHECK(status IN ('in-stock', 'pre-order')) NOT NULL,
-      description TEXT
+      description TEXT,
+      stock INTEGER DEFAULT 0
     )`);
   db.run(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -301,7 +302,7 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
 
 // Add new item
 app.post('/admin/items', authenticate, (req, res) => {
-  const { name, price, image_url, status, description } = req.body;
+  const { name, price, image_url, status, description, stock } = req.body;
 
   if (!name || price === undefined || !status) {
     return res.status(400).json({ error: "Name, price and status are required" });
@@ -312,10 +313,15 @@ app.post('/admin/items', authenticate, (req, res) => {
     return res.status(400).json({ error: "Price must be a number" });
   }
   priceNum = Math.round(priceNum * 100) / 100;
+  let stockNum = Number(stock);
+  if (isNaN(stockNum) || stockNum < 0) stockNum = 0;
+
+  // Automatic status handling if you want (optional)
+  const finalStatus = stockNum === 0 ? "pre-order" : "in-stock";
 
   db.run(
-    `INSERT INTO items (name, price, image_url, status, description) VALUES (?, ?, ?, ?, ?)`,
-    [name, priceNum, image_url || null, status, description || ""],
+    `INSERT INTO items (name, price, image_url, status, description, stock) VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, priceNum, image_url || null, finalStatus, description || "", stockNum],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true, id: this.lastID });
@@ -332,23 +338,19 @@ app.get('/admin/orders', authenticate, (req, res) => {
     (err, orders) => {
       if (err) return res.status(500).json({ error: err.message });
 
-      // If no orders, return empty array immediately
       if (!orders.length) return res.json([]);
 
-      // Extract order IDs for item lookup
       const orderIds = orders.map(o => o.id);
 
-      // Query all order items with item details for these orders
       db.all(
         `SELECT oi.order_id, i.name, i.status, oi.quantity
          FROM order_items oi
-         JOIN items i ON oi.item_id = i.id
+         JOIN items i ON order_items.item_id = items.id
          WHERE oi.order_id IN (${orderIds.map(() => "?").join(",")})`,
         orderIds,
         (err, items) => {
           if (err) return res.status(500).json({ error: err.message });
 
-          // Map order_id => [items]
           const itemsByOrder = {};
           for (const item of items) {
             if (!itemsByOrder[item.order_id]) itemsByOrder[item.order_id] = [];
@@ -359,7 +361,6 @@ app.get('/admin/orders', authenticate, (req, res) => {
             });
           }
 
-          // Attach items array to each order
           const ordersWithItems = orders.map(order => ({
             ...order,
             items: itemsByOrder[order.id] || [],
@@ -483,14 +484,12 @@ app.post('/admin/orders', authenticate, (req, res) => {
 app.delete('/admin/orders/:id', authenticate, (req, res) => {
   const orderId = req.params.id;
 
-  // Delete order items first due to foreign key dependency
   db.run(
     "DELETE FROM order_items WHERE order_id = ?",
     [orderId],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
 
-      // Then delete the order record itself
       db.run(
         "DELETE FROM orders WHERE id = ?",
         [orderId],
@@ -528,12 +527,12 @@ app.get('/track/:trackingId', (req, res) => {
 
 app.put('/admin/items/:id', authenticate, (req, res) => {
   const { id } = req.params;
-  const { name, price, image_url, status, description } = req.body;
+  const { name, price, image_url, description, stock } = req.body;
 
-  if (!name || price === undefined || !status) {
-    return res.status(400).json({ error: "Name, price and status are required" });
+  if (!name || price === undefined) {
+    return res.status(400).json({ error: "Name and price are required" });
   }
-  
+
   if (!/^\d+$/.test(id)) {
     return res.status(400).json({ error: "Invalid item ID" });
   }
@@ -544,10 +543,15 @@ app.put('/admin/items/:id', authenticate, (req, res) => {
     return res.status(400).json({ error: "Price must be a number" });
   }
   priceNum = Math.round(priceNum * 100) / 100;
+  let stockNum = Number(stock);
+  if (isNaN(stockNum) || stockNum < 0) stockNum = 0;
+
+  // Auto set status based on stock
+  const finalStatus = stockNum === 0 ? "pre-order" : "in-stock";
 
   db.run(
-    `UPDATE items SET name=?, price=?, image_url=?, status=?, description=? WHERE id=?`,
-    [name, priceNum, image_url || null, status, description || "", id],
+    `UPDATE items SET name=?, price=?, image_url=?, description=?, stock=?, status=? WHERE id=?`,
+    [name, priceNum, image_url || null, description || "", stockNum, finalStatus, id],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0) return res.status(404).json({ error: "Item not found" });
@@ -566,5 +570,3 @@ app.get('*', (req, res) => {
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
 });
-
-
