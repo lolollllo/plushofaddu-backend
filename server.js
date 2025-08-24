@@ -9,26 +9,21 @@ const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
 
-
 const app = express();
 const port = 3000;
 const SECRET = 'supersecretkey';
 
-
 app.use(cors());
 app.use(bodyParser.json());
 
-
 // Serve uploaded images statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
-
 
 // Multer setup for image uploads
 const storage = multer.diskStorage({
@@ -43,7 +38,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-
 const db = new sqlite3.Database('./database.sqlite', (err) => {
   if (err) {
     console.error("DB connection error:", err);
@@ -51,7 +45,6 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
     console.log('Connected to SQLite database.');
   }
 });
-
 
 // Generate tracking ID: POA<8 chars uppercase alphanumeric>
 function generateTrackingId() {
@@ -68,8 +61,7 @@ function validateContact(instagram, phone) {
   return (instagram && instagram.trim() !== "") || (phone && phone.trim() !== "");
 }
 
-
-// Initialize database tables
+// Initialize database tables, including item_images
 db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS items (
@@ -80,6 +72,13 @@ db.serialize(() => {
       status TEXT CHECK(status IN ('in-stock', 'pre-order')) NOT NULL,
       description TEXT,
       stock INTEGER DEFAULT 0
+    )`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS item_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL,
+      image_url TEXT NOT NULL,
+      FOREIGN KEY(item_id) REFERENCES items(id)
     )`);
   db.run(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -109,7 +108,6 @@ db.serialize(() => {
       FOREIGN KEY(item_id) REFERENCES items(id)
     )`);
 
-
   // Seed default admin user if not exists
   db.get("SELECT * FROM admins WHERE username = 'admin'", (err, row) => {
     if (err) {
@@ -128,16 +126,13 @@ db.serialize(() => {
   });
 });
 
-
 // Authentication middleware
 function authenticate(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(403).json({ error: "No token" });
 
-
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   if (!token) return res.status(403).json({ error: "No token" });
-
 
   jwt.verify(token, SECRET, (err) => {
     if (err) return res.status(403).json({ error: "Token invalid" });
@@ -145,15 +140,31 @@ function authenticate(req, res, next) {
   });
 }
 
-
-// Public endpoint: Get items
+// Public endpoint: Get items with preview image
 app.get('/items', (req, res) => {
-  db.all("SELECT * FROM items", [], (err, rows) => {
+  db.all(
+    `SELECT i.*, 
+     (SELECT image_url FROM item_images WHERE item_id = i.id LIMIT 1) as preview_image_url
+     FROM items i`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
+// Public endpoint: Get single item with all image URLs
+app.get('/items/:id', (req, res) => {
+  const id = req.params.id;
+  db.get("SELECT * FROM items WHERE id = ?", [id], (err, item) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!item) return res.status(404).json({ error: "Item not found" });
+
+    db.all("SELECT image_url FROM item_images WHERE item_id = ?", [id], (err2, images) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      item.images = images.map(img => img.image_url);
+      res.json(item);
+    });
+  });
+});
 
 // Public order placement endpoint (no auth)
 app.post('/orders', (req, res) => {
@@ -250,7 +261,6 @@ app.post('/orders', (req, res) => {
   });
 });
 
-
 // Admin login
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
@@ -258,11 +268,9 @@ app.post('/admin/login', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
-
     bcrypt.compare(password, user.password, (err, valid) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!valid) return res.status(401).json({ error: "Invalid credentials" });
-
 
       const token = jwt.sign({ username: user.username }, SECRET, { expiresIn: '4h' });
       res.json({ token });
@@ -270,8 +278,7 @@ app.post('/admin/login', (req, res) => {
   });
 });
 
-
-// Image upload route with sharp resize
+// Image upload route with sharp resize (single image)
 app.post('/admin/items/upload-image', authenticate, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -282,13 +289,12 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
     await sharp(imagePath)
       .resize(800, 800, {
         fit: 'inside',
-        position: sharp.strategy.attention,  // Focus on main subject
+        position: sharp.strategy.attention,
         withoutEnlargement: true,
       })
       .toFile(resizedImagePath);
 
     fs.unlinkSync(imagePath);
-
     fs.renameSync(resizedImagePath, imagePath);
 
     const imageUrl = `/uploads/${req.file.filename}`;
@@ -299,6 +305,37 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
   }
 });
 
+// Upload additional image for an item
+app.post('/admin/items/:id/upload-image', authenticate, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+  const itemId = req.params.id;
+  const imagePath = req.file.path;
+  const resizedImagePath = path.join(uploadsDir, 'resized-' + req.file.filename);
+
+  try {
+    await sharp(imagePath)
+      .resize(800, 800, {
+        fit: 'inside',
+        position: sharp.strategy.attention,
+        withoutEnlargement: true,
+      })
+      .toFile(resizedImagePath);
+
+    fs.unlinkSync(imagePath);
+    fs.renameSync(resizedImagePath, imagePath);
+
+    const imageUrl = `/uploads/${req.file.filename}`;
+
+    db.run("INSERT INTO item_images (item_id, image_url) VALUES (?, ?)", [itemId, imageUrl], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ url: imageUrl });
+    });
+  } catch (err) {
+    console.error("Image processing error:", err);
+    res.status(500).json({ error: "Failed to process image" });
+  }
+});
 
 // Add new item
 app.post('/admin/items', authenticate, (req, res) => {
@@ -316,7 +353,6 @@ app.post('/admin/items', authenticate, (req, res) => {
   let stockNum = Number(stock);
   if (isNaN(stockNum) || stockNum < 0) stockNum = 0;
 
-  // Automatic status handling if you want (optional)
   const finalStatus = stockNum === 0 ? "pre-order" : "in-stock";
 
   db.run(
@@ -328,7 +364,6 @@ app.post('/admin/items', authenticate, (req, res) => {
     }
   );
 });
-
 
 // Get all orders (with item summaries)
 app.get('/admin/orders', authenticate, (req, res) => {
@@ -345,7 +380,7 @@ app.get('/admin/orders', authenticate, (req, res) => {
       db.all(
         `SELECT oi.order_id, i.name, i.status, oi.quantity
          FROM order_items oi
-         JOIN items i ON order_items.item_id = items.id
+         JOIN items i ON oi.item_id = i.id
          WHERE oi.order_id IN (${orderIds.map(() => "?").join(",")})`,
         orderIds,
         (err, items) => {
@@ -373,7 +408,6 @@ app.get('/admin/orders', authenticate, (req, res) => {
   );
 });
 
-
 // Update order status by order id
 app.post('/admin/orders/:id/status', authenticate, (req, res) => {
   const { status } = req.body;
@@ -385,7 +419,6 @@ app.post('/admin/orders/:id/status', authenticate, (req, res) => {
     res.json({ success: true });
   });
 });
-
 
 // Add new order with items (admin)
 app.post('/admin/orders', authenticate, (req, res) => {
@@ -503,7 +536,6 @@ app.delete('/admin/orders/:id', authenticate, (req, res) => {
   );
 });
 
-
 // Track order by tracking id
 app.get('/track/:trackingId', (req, res) => {
   db.get("SELECT * FROM orders WHERE tracking_id = ?", [req.params.trackingId], (err, order) => {
@@ -524,7 +556,6 @@ app.get('/track/:trackingId', (req, res) => {
   });
 });
 
-
 app.put('/admin/items/:id', authenticate, (req, res) => {
   const { id } = req.params;
   const { name, price, image_url, description, stock } = req.body;
@@ -536,7 +567,6 @@ app.put('/admin/items/:id', authenticate, (req, res) => {
   if (!/^\d+$/.test(id)) {
     return res.status(400).json({ error: "Invalid item ID" });
   }
-
 
   let priceNum = Number(price);
   if (isNaN(priceNum)) {
@@ -559,7 +589,6 @@ app.put('/admin/items/:id', authenticate, (req, res) => {
     }
   );
 });
-
 
 // Serve React build for non-API requests
 app.use(express.static(path.join(__dirname, 'build')));
