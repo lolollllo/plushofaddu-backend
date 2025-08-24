@@ -37,6 +37,7 @@ const storage = multer.diskStorage({
   },
 });
 const upload = multer({ storage });
+const multiUpload = multer({ storage }).array("images", 5);
 
 const db = new sqlite3.Database('./database.sqlite', (err) => {
   if (err) {
@@ -108,6 +109,7 @@ db.serialize(() => {
       FOREIGN KEY(item_id) REFERENCES items(id)
     )`);
 
+
   // Seed default admin user if not exists
   db.get("SELECT * FROM admins WHERE username = 'admin'", (err, row) => {
     if (err) {
@@ -140,21 +142,18 @@ function authenticate(req, res, next) {
   });
 }
 
-// Public endpoint: Get items with preview image
+// Public endpoint: Get items with preview image (first from item_images)
 app.get('/items', (req, res) => {
   db.all(
     `SELECT i.*, 
-        COALESCE(
-          (SELECT image_url FROM item_images WHERE item_id = i.id LIMIT 1),
-          i.image_url
-        ) as preview_image_url
+        (SELECT image_url FROM item_images WHERE item_id = i.id LIMIT 1) as preview_image_url
       FROM items i`, [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
       });
 });
 
-// Public endpoint: Get single item with all image URLs
+// Public endpoint: Get single item with all images
 app.get('/items/:id', (req, res) => {
   const id = req.params.id;
   db.get("SELECT * FROM items WHERE id = ?", [id], (err, item) => {
@@ -222,7 +221,7 @@ app.post('/orders', (req, res) => {
           db.run("COMMIT", (commitErr) => {
             if (commitErr) return res.status(500).json({ error: commitErr.message });
 
-            // Now fetch the order items with status included
+            // Fetch the order items with status included
             db.all(
               `SELECT i.name, i.status, i.price, oi.quantity
                FROM order_items oi
@@ -308,7 +307,7 @@ app.post('/admin/items/upload-image', authenticate, upload.single('image'), asyn
   }
 });
 
-// Upload additional image for an item
+// Upload additional image for an item (store in item_images)
 app.post('/admin/items/:id/upload-image', authenticate, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
