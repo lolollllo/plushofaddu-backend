@@ -44,7 +44,6 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
     console.error("DB connection error:", err);
   } else {
     console.log('Connected to SQLite database.');
-    migrateImagesToItemImages();
   }
 });
 
@@ -131,6 +130,7 @@ db.serialize(() => {
       FOREIGN KEY(item_id) REFERENCES items(id)
     )`);
 
+    migrateImagesToItemImages();
 
   // Seed default admin user if not exists
   db.get("SELECT * FROM admins WHERE username = 'admin'", (err, row) => {
