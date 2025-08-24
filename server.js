@@ -144,11 +144,14 @@ function authenticate(req, res, next) {
 app.get('/items', (req, res) => {
   db.all(
     `SELECT i.*, 
-     (SELECT image_url FROM item_images WHERE item_id = i.id LIMIT 1) as preview_image_url
-     FROM items i`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+        COALESCE(
+          (SELECT image_url FROM item_images WHERE item_id = i.id LIMIT 1),
+          i.image_url
+        ) as preview_image_url
+      FROM items i`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+      });
 });
 
 // Public endpoint: Get single item with all image URLs
