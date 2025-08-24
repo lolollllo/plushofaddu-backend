@@ -48,6 +48,27 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
   }
 });
 
+function migrateImagesToItemImages() {
+  db.all("SELECT id, image_url FROM items WHERE image_url IS NOT NULL AND image_url != ''", [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching items for migration:', err);
+      return;
+    }
+    if (rows.length === 0) {
+      console.log('Migration skipped: No image_url entries found in items.');
+      return;
+    }
+    const stmt = db.prepare("INSERT OR IGNORE INTO item_images(item_id, image_url) VALUES (?, ?)");
+    rows.forEach(({ id, image_url }) => {
+      stmt.run(id, image_url);
+    });
+    stmt.finalize((err) => {
+      if (err) console.error('Error during migration:', err);
+      else console.log('Migration complete: item_images populated from items.image_url');
+    });
+  });
+}
+
 // Generate tracking ID: POA<8 chars uppercase alphanumeric>
 function generateTrackingId() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -142,28 +163,6 @@ function authenticate(req, res, next) {
     next();
   });
 }
-
-function migrateImagesToItemImages() {
-  db.all("SELECT id, image_url FROM items WHERE image_url IS NOT NULL AND image_url != ''", [], (err, rows) => {
-    if (err) {
-      console.error('Error fetching items for migration:', err);
-      return;
-    }
-    if (rows.length === 0) {
-      console.log('Migration skipped: No image_url entries found in items.');
-      return;
-    }
-    const stmt = db.prepare("INSERT OR IGNORE INTO item_images(item_id, image_url) VALUES (?, ?)");
-    rows.forEach(({ id, image_url }) => {
-      stmt.run(id, image_url);
-    });
-    stmt.finalize((err) => {
-      if (err) console.error('Error during migration:', err);
-      else console.log('Migration complete: item_images populated from items.image_url');
-    });
-  });
-}
-
 
 // Public endpoint: Get items with preview image (first from item_images)
 app.get('/items', (req, res) => {
