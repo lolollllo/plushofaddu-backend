@@ -476,7 +476,7 @@ app.post('/admin/orders/:id/status', authenticate, (req, res) => {
 
 // Add new order with items (admin)
 app.post('/admin/orders', authenticate, (req, res) => {
-  const { customer_name, instagram, phone, delivery_method, payment_method, orderItems } = req.body;
+  const { customer_name, instagram, phone, delivery_method, delivery_charge, payment_method, orderItems } = req.body;
 
   if (!customer_name) {
     return res.status(400).json({ error: "Customer name is required" });
@@ -498,7 +498,7 @@ app.post('/admin/orders', authenticate, (req, res) => {
         customer_name, instagram, phone,
         delivery_method, payment_method, tracking_id, status
       ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
-      [customer_name, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
+      [customer_name, instagram || null, phone || null, delivery_method, delivery_charge || null, payment_method, tracking_id],
       function (err) {
         if (err) {
           db.run("ROLLBACK");
