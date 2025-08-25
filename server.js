@@ -213,7 +213,7 @@ app.post('/orders', (req, res) => {
     db.run(
       `INSERT INTO orders (
         customer_name, instagram, phone,
-        delivery_method, delivery_charge, payment_method, tracking_id, status
+        delivery_method, payment_method, tracking_id, status
       ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
       [customer_name, instagram || null, phone || null, delivery_method, delivery_charge || 0, payment_method, tracking_id],
       function (err) {
@@ -272,7 +272,6 @@ app.post('/orders', (req, res) => {
                   instagram,
                   phone,
                   delivery_method,
-                  delivery_charge,
                   payment_method,
                   total_price: totalPrice.toFixed(2),
                   items,
