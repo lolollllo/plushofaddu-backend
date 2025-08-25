@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const sqlite3 = require('sqlite3').verbose();
+const mysql = require('mysql2');
 const bodyParser = require('body-parser');
 const multer = require('multer');
 const path = require('path');
@@ -39,12 +40,15 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 const multiUpload = multer({ storage }).array("images", 5);
 
-const db = new sqlite3.Database('./database.sqlite', (err) => {
-  if (err) {
-    console.error("DB connection error:", err);
-  } else {
-    console.log('Connected to SQLite database.');
-  }
+const db = mysql.createPool({
+  host: 'sql101.infinityfree.com',
+  user: 'if0_39504987',
+  password: '4luwcqcuoJdMe',
+  database: 'if0_39504987_XXX',
+  port: 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
 function migrateImagesToItemImages() {
@@ -213,7 +217,7 @@ app.post('/orders', (req, res) => {
     db.run(
       `INSERT INTO orders (
         customer_name, instagram, phone,
-        delivery_method, payment_method, tracking_id, status
+        delivery_method, payment_method, delivery_charge, tracking_id, status
       ) VALUES (?, ?, ?, ?, ?, ?, 'waiting for updates')`,
       [customer_name, instagram || null, phone || null, delivery_method, payment_method, tracking_id],
       function (err) {
@@ -480,7 +484,7 @@ app.post('/admin/orders/:id/status', authenticate, (req, res) => {
 
 // Add new order with items (admin)
 app.post('/admin/orders', authenticate, (req, res) => {
-  const { customer_name, instagram, phone, delivery_method, payment_method, orderItems } = req.body;
+  const { customer_name, instagram, phone, delivery_method, payment_method, orderItems, delivery_charge } = req.body;
 
   if (!customer_name) {
     return res.status(400).json({ error: "Customer name is required" });
@@ -550,6 +554,8 @@ app.post('/admin/orders', authenticate, (req, res) => {
                   quantity,
                 }));
 
+                const totalPriceWithDelivery = totalPrice + (delivery_charge || 0);
+
                 res.json({
                   order_id: orderId,
                   tracking_id,
@@ -558,7 +564,8 @@ app.post('/admin/orders', authenticate, (req, res) => {
                   phone,
                   delivery_method,
                   payment_method,
-                  total_price: totalPrice.toFixed(2),
+                  delivery_charge: delivery_charge || 0,
+                  total_price:  totalPriceWithDelivery.toFixed(2),
                   items,
                   message: "Order created successfully",
                 });
