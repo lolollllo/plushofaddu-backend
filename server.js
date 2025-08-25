@@ -116,6 +116,7 @@ db.serialize(() => {
       phone TEXT,
       delivery_method TEXT CHECK(delivery_method IN ('pickup', 'delivery')) NOT NULL,
       payment_method TEXT CHECK(payment_method IN ('transfer', 'cash')) NOT NULL,
+      delivery_charge REAL DEFAULT 0,
       tracking_id TEXT UNIQUE NOT NULL,
       status TEXT DEFAULT 'waiting for updates',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -192,7 +193,7 @@ app.get('/items/:id', (req, res) => {
 
 // Public order placement endpoint (no auth)
 app.post('/orders', (req, res) => {
-  const { customer_name, instagram, phone, delivery_method, payment_method, orderItems } = req.body;
+  const { customer_name, instagram, phone, delivery_method, payment_method, orderItems, delivery_charge } = req.body;
 
   if (!customer_name) {
     return res.status(400).json({ error: "Customer name is required" });
@@ -264,6 +265,8 @@ app.post('/orders', (req, res) => {
                   quantity,
                 }));
 
+                const totalPriceWithDelivery = totalPrice + (delivery_charge || 0);
+
                 res.json({
                   order_id: orderId,
                   tracking_id,
@@ -272,7 +275,8 @@ app.post('/orders', (req, res) => {
                   phone,
                   delivery_method,
                   payment_method,
-                  total_price: totalPrice.toFixed(2),
+                  delivery_charge: delivery_charge || 0,
+                  total_price: totalPriceWithDelivery.toFixed(2),
                   items,
                   message: "Your order has been confirmed!",
                 });
