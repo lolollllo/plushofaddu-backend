@@ -8,7 +8,6 @@
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.0",
     "multer": "^2.0.2",
-    "mysql2": "^3.14.3",
     "sharp": "^0.34.3",
     "sqlite3": "^5.1.6"
   }
