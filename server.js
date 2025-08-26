@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
 const { createClient } = require('@libsql/client');
+require('dotenv').config();
 
 const app = express();
 const port = 3000;
@@ -546,4 +547,5 @@ app.get('*', (req, res) => {
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
 });
+
 
