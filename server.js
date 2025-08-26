@@ -205,70 +205,88 @@ app.get('/items/:id', async (req, res) => {
 
 // Public order placement endpoint (no auth)
 app.post('/orders', async (req, res) => {
-  const { customer_name, instagram, phone, delivery_method, payment_method, orderItems, delivery_charge } = req.body;
 
-  if (!customer_name) {
-    return res.status(400).json({ error: "Customer name is required" });
-  }
-  if (!validateContact(instagram, phone)) {
-    return res.status(400).json({ error: "Please provide either Instagram username or Phone number" });
-  }
-  if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) {
-    return res.status(400).json({ error: "Order must have at least one item" });
-  }
+    const { customer_name, instagram, phone, delivery_method, payment_method, orderItems, delivery_charge } = req.body;
 
-  const tracking_id = generateTrackingId();
+    // Data cleaning and validation
+    const finalCustomerName = typeof customer_name === 'string' && customer_name.trim().length > 0 ? customer_name.trim() : null;
+    const finalInstagram = typeof instagram === 'string' && instagram.trim().length > 0 ? instagram.trim() : null;
+    const finalPhone = typeof phone === 'string' && phone.trim().length > 0 ? phone.trim() : null;
+    const finalDeliveryMethod = typeof delivery_method === 'string' ? delivery_method.trim() : null;
+    const finalPaymentMethod = typeof payment_method === 'string' ? payment_method.trim() : null;
+    const finalDeliveryCharge = typeof delivery_charge === 'number' ? delivery_charge : 0;
 
-  let orderId;
-  try {
-    await db.transaction(async (tx) => {
-      const orderRs = await tx.execute({
-        sql: `INSERT INTO orders (
-          customer_name, instagram, phone,
-          delivery_method, payment_method, delivery_charge, tracking_id, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [customer_name, instagram || null, phone || null, delivery_method, payment_method, delivery_charge || 0, tracking_id],
-      });
-      orderId = orderRs.lastInsertRowid;
+    if (!finalCustomerName) {
+        return res.status(400).json({ error: "Customer name is required" });
+    }
+    if (!finalInstagram && !finalPhone) {
+        return res.status(400).json({ error: "Please provide either Instagram username or Phone number." });
+    }
+    if (!orderItems || !Array.isArray(orderItems) || orderItems.length === 0) {
+        return res.status(400).json({ error: "Order must have at least one item." });
+    }
+    const tracking_id = generateTrackingId();
+    let orderId;
+    try {
+        // Step 1: Insert the new order.
+        const orderRs = await db.execute({
+            sql: `INSERT INTO orders (
+                customer_name, instagram, phone,
+                delivery_method, payment_method, delivery_charge, tracking_id, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [finalCustomerName, finalInstagram, finalPhone, finalDeliveryMethod, finalPaymentMethod, finalDeliveryCharge, tracking_id, 'waiting for updates'],
+        });
+        // Convert the BigInt to a Number.
+        orderId = Number(orderRs.lastInsertRowid);
+        // Step 2: Insert each order item individually.
+        for (const oi of orderItems) {
+            await db.execute({
+                sql: "INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)",
+                args: [orderId, Number(oi.item_id), Number(oi.quantity)],
+            });
+        }
+        // Step 3: All inserts succeeded, fetch details and send response.
+        const itemsRs = await db.execute({
+            sql: `SELECT i.name, i.status, i.price, oi.quantity
+                  FROM order_items oi
+                  JOIN items i ON oi.item_id = i.id
+                  WHERE oi.order_id = ?`,
+            args: [orderId]
+        });
 
-      const stmt = tx.prepare("INSERT INTO order_items (order_id, item_id, quantity) VALUES (?, ?, ?)");
-      for (const oi of orderItems) {
-        await stmt.execute([orderId, oi.item_id, oi.quantity]);
-      }
-    });
+        const totalPrice = itemsRs.rows.reduce(
+            (sum, row) => sum + row.price * row.quantity, 0
+        );
 
-    const itemsRs = await db.execute({
-      sql: `SELECT i.name, i.status, i.price, oi.quantity
-            FROM order_items oi
-            JOIN items i ON oi.item_id = i.id
-            WHERE oi.order_id = ?`,
-      args: [orderId]
-    });
+        const items = itemsRs.rows.map(({ name, status, quantity }) => ({ name, status, quantity }));
+        const totalPriceWithDelivery = totalPrice + finalDeliveryCharge;
 
-    const totalPrice = itemsRs.rows.reduce(
-      (sum, row) => sum + row.price * row.quantity,
-      0
-    );
-
-    const items = itemsRs.rows.map(({ name, status, quantity }) => ({ name, status, quantity }));
-    const totalPriceWithDelivery = totalPrice + (delivery_charge || 0);
-
-    res.json({
-      order_id: orderId,
-      tracking_id,
-      customer_name,
-      instagram,
-      phone,
-      delivery_method,
-      payment_method,
-      delivery_charge: delivery_charge || 0,
-      total_price: totalPriceWithDelivery.toFixed(2),
-      items,
-      message: "Your order has been confirmed!",
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+        res.json({
+            order_id: orderId.toString(),
+            tracking_id,
+            customer_name: finalCustomerName,
+            instagram: finalInstagram,
+            phone: finalPhone,
+            delivery_method: finalDeliveryMethod,
+            payment_method: finalPaymentMethod,
+            delivery_charge: finalDeliveryCharge,
+            total_price: totalPriceWithDelivery.toFixed(2),
+            items,
+            message: "Your order has been confirmed!",
+        });
+    } catch (err) {
+        console.error('Error placing order:', err);
+        // Manual Rollback: If any error occurred, delete the order that was created
+        if (orderId) {
+            try {
+                // Delete the order and its items (due to ON DELETE CASCADE)
+                await db.execute({ sql: "DELETE FROM orders WHERE id = ?", args: [orderId] });
+            } catch (rollbackErr) {
+                console.error('Failed to rollback order:', rollbackErr);
+            }
+        }
+        res.status(500).json({ error: "An error occurred while placing your order. Please try again." });
+    }
 });
 
 // Admin login
